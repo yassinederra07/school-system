@@ -5,11 +5,8 @@ import random
 import string
 from difflib import get_close_matches
 
-# ⚠️ إذا بغيت AI حقيقي
-USE_AI = False  # بدلها True إذا عندك API
-
 # =========================
-# 📁 الملفات
+# 📁 إعداد الملفات
 # =========================
 DATA_FOLDER = "data"
 if not os.path.exists(DATA_FOLDER):
@@ -19,35 +16,28 @@ ABSENCE_FILE = f"{DATA_FOLDER}/absence.csv"
 USERS_FILE = f"{DATA_FOLDER}/users.csv"
 
 # =========================
-# 📥 CSV (حل العربية نهائيا + separator fix)
+# 📥 CSV
 # =========================
 def load_data(file):
     if os.path.exists(file):
         try:
-            df = pd.read_csv(file, encoding="utf-8-sig", sep=",")
+            return pd.read_csv(file, encoding="utf-8-sig")
         except:
-            df = pd.read_csv(file, encoding="utf-8-sig", sep=";")
-
-        # 🔥 إصلاح في حالة الأعمدة مدموجة
-        if len(df.columns) == 1:
-            df = df[df.columns[0]].str.split(",", expand=True)
-
-            if df.shape[1] >= 6:
-                df.columns = ["name","lastname","birth","number","gender","status"][:df.shape[1]]
-
-        return df
-
+            return pd.read_csv(file, encoding="utf-8-sig", sep=";")
     return pd.DataFrame()
 
 def save_data(df, file):
-    df.to_csv(file, index=False, encoding="utf-8-sig", sep=",")
+    df.to_csv(file, index=False, encoding="utf-8-sig")
 
 # =========================
-# 📁 ملف لكل قسم
+# 📁 ملفات الأقسام
 # =========================
 def get_class_file(level, class_num):
     level = level.replace(" ", "_")
     return f"{DATA_FOLDER}/{level}_{class_num}.csv"
+
+def list_classes():
+    return [f for f in os.listdir(DATA_FOLDER) if "_" in f and f.endswith(".csv") and "absence" not in f]
 
 # =========================
 # 🔐 password
@@ -62,98 +52,113 @@ def generate_login(name, lastname):
     return f"{name}{lastname}@taalim.ma".replace(" ", "").lower()
 
 # =========================
-# 🤖 AI حقيقي (اختياري)
-# =========================
-def ai_search(df, query):
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key="YOUR_API_KEY")
-
-        names = (df["name"] + " " + df["lastname"]).tolist()
-
-        prompt = f"""
-        عندي هذه الأسماء:
-        {names}
-
-        المستخدم كتب: {query}
-
-        شكون أقرب اسم؟ رجع غير الاسم.
-        """
-
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        result = response.choices[0].message.content.strip()
-        return df[(df["name"] + " " + df["lastname"]) == result]
-
-    except:
-        return df
-
-# =========================
-# 🤖 بحث ذكي (بدون API)
+# 🤖 بحث
 # =========================
 def smart_search(df, query):
-    if df.empty:
-        return df
-
     df["full"] = (df["name"].astype(str) + " " + df["lastname"].astype(str))
     matches = get_close_matches(query, df["full"], n=10, cutoff=0.3)
-
     return df[df["full"].isin(matches)]
+
+# =========================
+# 🔍 تحديد الأعمدة بذكاء
+# =========================
+def find_column(columns, keywords):
+    for key in keywords:
+        for col in columns:
+            if key in col:
+                return col
+    return None
 
 # =========================
 # 🤵 لوحة المدير
 # =========================
 def directeur_panel():
-    st.title("🔥 نظام إدارة الثانوية (AI)")
+    st.title("🔥 نظام إدارة الثانوية PRO")
 
     choice = st.selectbox("اختار", [
         "إضافة قسم",
+        "حذف قسم",
         "إضافة تلميذ",
         "توقيف تلميذ",
         "إرجاع تلميذ",
-        "تسجيل الغياب",
-        "Dashboard"
+        "إحصائيات الغياب",
+        "إضافة حساب"
     ])
 
     # =========================
-    # ➕ إضافة قسم
+    # ➕ إضافة قسم (FIX FINAL)
     # =========================
     if choice == "إضافة قسم":
-        level = st.selectbox("السلك", [
-            "الأولى إعدادي","الثانية إعدادي","الثالثة إعدادي","جدع مشترك"
-        ])
-
-        class_num = st.text_input("القسم")
-        file = st.file_uploader("Excel", type=["xlsx"])
+        level = st.selectbox("السلك", ["الأولى إعدادي","الثانية إعدادي","الثالثة إعدادي","جدع مشترك"])
+        class_num = st.text_input("رقم القسم")
+        file = st.file_uploader("📂 Excel", type=["xlsx"])
 
         if st.button("إنشاء"):
             if file and class_num:
                 df_excel = pd.read_excel(file, dtype=str).fillna("")
 
+                # تنظيف الأعمدة
+                df_excel.columns = df_excel.columns.str.strip().str.lower()
+                cols = df_excel.columns
+
+                # 🔥 التعرف الذكي
+                name_col = find_column(cols, ["الاسم", "name"])
+                lastname_col = find_column(cols, ["النسب", "lastname"])
+                birth_col = find_column(cols, ["تاريخ", "birth"])
+                number_col = find_column(cols, ["الرقم", "number"])
+                gender_col = find_column(cols, ["النوع", "gender"])
+
+                if not name_col or not lastname_col:
+                    st.error("❌ تأكد من وجود الاسم والنسب في Excel")
+                    return
+
                 students = []
-                for _, row in df_excel.iterrows():
+
+                for i, row in df_excel.iterrows():
+                    name = str(row[name_col]).strip()
+                    lastname = str(row[lastname_col]).strip()
+
+                    # 🧠 تصحيح nan
+                    if name == "" or name.lower() == "nan":
+                        name = "غير معروف"
+                    if lastname == "" or lastname.lower() == "nan":
+                        lastname = ""
+
                     students.append({
-                        "name": str(row[0]).strip(),
-                        "lastname": str(row[1]).strip(),
-                        "birth": row[2],
-                        "number": row[3],
-                        "gender": row[4],
+                        "name": name,
+                        "lastname": lastname,
+                        "birth": str(row[birth_col]).strip() if birth_col else "",
+                        "number": i + 1,
+                        "gender": str(row[gender_col]).strip() if gender_col else "",
                         "status": "active"
                     })
 
                 df = pd.DataFrame(students)
                 save_data(df, get_class_file(level, class_num))
 
-                st.success("✅ تم إنشاء القسم بملف خاص")
+                st.success("✅ تم إنشاء القسم بنجاح")
+
+    # =========================
+    # ❌ حذف قسم
+    # =========================
+    elif choice == "حذف قسم":
+        classes = list_classes()
+
+        if not classes:
+            st.warning("لا يوجد أقسام")
+        else:
+            selected = st.selectbox("اختر قسم", classes)
+
+            if st.button("حذف"):
+                os.remove(f"{DATA_FOLDER}/{selected}")
+                st.success("✅ تم الحذف")
+                st.rerun()
 
     # =========================
     # ➕ إضافة تلميذ
     # =========================
     elif choice == "إضافة تلميذ":
-        level = st.text_input("السلك")
+        level = st.selectbox("السلك", ["الأولى إعدادي","الثانية إعدادي","الثالثة إعدادي","جدع مشترك"])
         class_num = st.text_input("القسم")
 
         name = st.text_input("الإسم")
@@ -178,109 +183,90 @@ def directeur_panel():
             st.success("✅ تمت الإضافة")
 
     # =========================
-    # ⛔ توقيف (AI)
+    # ⛔ توقيف
     # =========================
     elif choice == "توقيف تلميذ":
-        level = st.text_input("السلك")
-        class_num = st.text_input("القسم")
+        classes = list_classes()
+        selected = st.selectbox("اختر القسم", classes)
 
-        file = get_class_file(level, class_num)
-        df = load_data(file)
+        df = load_data(f"{DATA_FOLDER}/{selected}")
 
-        search = st.text_input("🤖 ابحث بأي طريقة")
+        for i, row in df.iterrows():
+            col1, col2 = st.columns(2)
 
-        if search:
-            if USE_AI:
-                df = ai_search(df, search)
-            else:
-                df = smart_search(df, search)
+            with col1:
+                st.write(f"{row['number']} - {row['name']} {row['lastname']}")
 
-        if df.empty:
-            st.warning("❌ لا يوجد")
-        else:
-            for i, row in df.iterrows():
-                col1, col2, col3 = st.columns([4,2,2])
-
-                with col1:
-                    st.write(f"👤 {row['name']} {row['lastname']}")
-
-                with col2:
-                    st.write(row["status"])
-
-                with col3:
-                    if row["status"] == "active":
-                        if st.button("⛔", key=f"s_{i}"):
-                            df_all = load_data(file)
-                            df_all.at[i, "status"] = "stopped"
-                            save_data(df_all, file)
-                            st.rerun()
+            with col2:
+                if row["status"] == "active":
+                    if st.button("⛔", key=f"s_{i}"):
+                        df.at[i, "status"] = "stopped"
+                        save_data(df, f"{DATA_FOLDER}/{selected}")
+                        st.rerun()
 
     # =========================
     # 🔄 إرجاع
     # =========================
     elif choice == "إرجاع تلميذ":
-        level = st.text_input("السلك")
-        class_num = st.text_input("القسم")
+        classes = list_classes()
+        selected = st.selectbox("القسم", classes)
 
-        file = get_class_file(level, class_num)
-        df = load_data(file)
-
+        df = load_data(f"{DATA_FOLDER}/{selected}")
         stopped = df[df["status"] == "stopped"]
 
         for i, row in stopped.iterrows():
-            st.write(f"{row['name']} {row['lastname']}")
+            st.write(f"{row['number']} - {row['name']} {row['lastname']}")
 
             if st.button("🔄", key=f"r_{i}"):
                 df.at[i, "status"] = "active"
-                save_data(df, file)
+                save_data(df, f"{DATA_FOLDER}/{selected}")
                 st.rerun()
 
     # =========================
-    # 📝 غياب
+    # 📊 إحصائيات
     # =========================
-    elif choice == "تسجيل الغياب":
-        level = st.text_input("السلك")
-        class_num = st.text_input("القسم")
-
-        file = get_class_file(level, class_num)
-        df = load_data(file)
-
-        date = st.date_input("📅")
-
-        absences = []
-
-        for i, row in df.iterrows():
-            col1, col2 = st.columns([4,1])
-
-            with col1:
-                st.write(f"{row['name']} {row['lastname']}")
-
-            with col2:
-                if st.checkbox("غائب", key=f"a_{i}"):
-                    absences.append({
-                        "name": row["name"],
-                        "lastname": row["lastname"],
-                        "date": date,
-                        "class": class_num
-                    })
-
-        if st.button("حفظ"):
-            df_abs = load_data(ABSENCE_FILE)
-            df_abs = pd.concat([df_abs, pd.DataFrame(absences)])
-            save_data(df_abs, ABSENCE_FILE)
-
-            st.success("✅ تم حفظ الغياب")
-
-    # =========================
-    # 📊 Dashboard
-    # =========================
-    elif choice == "Dashboard":
+    elif choice == "إحصائيات الغياب":
         df = load_data(ABSENCE_FILE)
 
         if df.empty:
             st.warning("لا يوجد بيانات")
         else:
-            st.bar_chart(df.groupby("name").size())
+            stats = df.groupby(["name","date"]).size().reset_index(name="total")
+            st.dataframe(stats)
+            st.bar_chart(stats.groupby("name")["total"].sum())
+
+    # =========================
+    # 🔐 حساب
+    # =========================
+    elif choice == "إضافة حساب":
+        role = st.selectbox("الفئة", ["prof","surveillant","directeur"])
+
+        name = st.text_input("الإسم")
+        lastname = st.text_input("النسب")
+        phone = st.text_input("الهاتف")
+        subject = st.text_input("المادة")
+
+        if st.button("إنشاء"):
+            login = generate_login(name, lastname)
+            password = generate_password()
+
+            df = load_data(USERS_FILE)
+
+            new = {
+                "login": login,
+                "password": password,
+                "role": role,
+                "name": name,
+                "lastname": lastname,
+                "phone": phone,
+                "subject": subject
+            }
+
+            df = pd.concat([df, pd.DataFrame([new])])
+            save_data(df, USERS_FILE)
+
+            st.success(f"✅ {login}")
+            st.info(f"🔐 {password}")
 
 # تشغيل
 directeur_panel()
